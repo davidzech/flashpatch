@@ -1,4 +1,4 @@
-#include <agb_flash.h>
+#include <flash/flash.h>
 
 constexpr FlashInfo MX29L010 = {.maxTime = mxMaxTime,
                                 .type = {

@@ -24,7 +24,9 @@ static vu16 *sTimerReg;
 static u16 sSavedIme;
 static u8 sFlashTimeoutFlag = 0;
 
-template <const FlashInfo &T> void SwitchFlashbank(u16 sectorNum) {
+template <const FlashInfo &T> u16 WaitForFlashWrite(u8 phase, u8 *addr, u8 lastData);
+
+template <const FlashInfo &T> void SwitchFlashBank(u16 sectorNum) {
     // not supported yet
     return;
 }
@@ -63,8 +65,6 @@ template <const FlashInfo &T> void ReadFlash(u16 sectorNum, u32 offset, u8 *dest
     vu16 *funcSrc;
     vu16 *funcDest;
     decltype(ReadFlashCore) *readFlashCore;
-
-    static_assert(sizeof(readFlashCoreBuffer) >= uintptr_t(_ReadFlashCoreEND) - uintptr_t(ReadFlashCore), "ReadFlashCore must fit into buffer");
 
     REG_WAITCNT = (REG_WAITCNT & ~WAITCNT_SRAM_MASK) | WAITCNT_SRAM_8;
 
@@ -107,6 +107,49 @@ template <const FlashInfo &T> static u16 ProgramByte(u8 *src, u8 *dest) {
     return WaitForFlashWrite<T>(1, dest, *src);
 }
 
+template <const FlashInfo &T> u16 EraseFlashSector(u16 sectorNum) {
+    u16 numTries = 0;
+    u16 result;
+    u8 *addr;
+    u16 readFlash1Buffer[0x20];
+
+    if (sectorNum >= T.type.sector.count) {
+        return 0x80FF;
+    }
+
+    SwitchFlashBank<T>(sectorNum / SECTORS_PER_BANK);
+    sectorNum %= SECTORS_PER_BANK;
+
+try_erase:
+    REG_WAITCNT = (REG_WAITCNT & ~WAITCNT_SRAM_MASK) | T.type.wait[0];
+
+    addr = FLASH_BASE + (sectorNum << T.type.sector.shift);
+
+    FLASH_WRITE(0x5555, 0xAA);
+    FLASH_WRITE(0x2AAA, 0x55);
+    FLASH_WRITE(0x5555, 0x80);
+    FLASH_WRITE(0x5555, 0xAA);
+    FLASH_WRITE(0x2AAA, 0x55);
+    *addr = 0x30;
+
+    SetReadFlash1((u8 *)readFlash1Buffer);
+
+    result = WaitForFlashWrite<T>(2, addr, 0xFF);
+
+    if (!(result & 0xA) || numTries > 3) {
+        goto done;
+    }
+
+    numTries++;
+
+    goto try_erase;
+
+done:
+    REG_WAITCNT = (REG_WAITCNT & ~WAITCNT_SRAM_MASK) | WAITCNT_SRAM_8;
+
+    return result;
+}
+
 template <const FlashInfo &T> u16 ProgramFlashSector(u16 sectorNum, u8 *src) {
 
     u8 *dest;
@@ -122,7 +165,7 @@ template <const FlashInfo &T> u16 ProgramFlashSector(u16 sectorNum, u8 *src) {
         return result;
     }
 
-    SwitchFlashbank<T>(sectorNum / SECTORS_PER_BANK);
+    SwitchFlashBank<T>(sectorNum / SECTORS_PER_BANK);
     sectorNum %= SECTORS_PER_BANK;
 
     // SetReadFlash1((u8 *)readFlash1Buffer);
@@ -156,7 +199,7 @@ template <const FlashInfo &T> u32 ProgramFlashSectorAndVerify(u16 sectorNum, u8 
             continue;
         }
 
-        result = VerifyFlashSector<T>(sectorNum, src);
+        result = VerifyFlashSector(sectorNum, src);
         if (result == 0) {
             break;
         }
@@ -174,7 +217,7 @@ template <const FlashInfo &T> u32 ProgramFlashSectorAndVerifyNBytes(u16 sectorNu
             continue;
         }
 
-        result = VerifyFlashSectorNBytes<T>(sectorNum, dataSrc, n);
+        result = VerifyFlashSectorNBytes(sectorNum, dataSrc, n);
         if (result != 0) {
             continue;
         }
@@ -280,46 +323,3 @@ template <const FlashInfo &T> u16 EraseFlashChip() {
 
     return result;
 };
-
-template <const FlashInfo &T> u16 EraseFlashSector(u16 sectorNum) {
-    u16 numTries = 0;
-    u16 result;
-    u8 *addr;
-    u16 readFlash1Buffer[0x20];
-
-    if (sectorNum >= T.type.sector.count) {
-        return 0x80FF;
-    }
-
-    SwitchFlashBank<T>(sectorNum / SECTORS_PER_BANK);
-    sectorNum %= SECTORS_PER_BANK;
-
-try_erase:
-    REG_WAITCNT = (REG_WAITCNT & ~WAITCNT_SRAM_MASK) | T.type.wait[0];
-
-    addr = FLASH_BASE + (sectorNum << T.type.sector.shift);
-
-    FLASH_WRITE(0x5555, 0xAA);
-    FLASH_WRITE(0x2AAA, 0x55);
-    FLASH_WRITE(0x5555, 0x80);
-    FLASH_WRITE(0x5555, 0xAA);
-    FLASH_WRITE(0x2AAA, 0x55);
-    *addr = 0x30;
-
-    SetReadFlash1((u8 *)readFlash1Buffer);
-
-    result = WaitForFlashWrite<T>(2, addr, 0xFF);
-
-    if (!(result & 0xA) || numTries > 3) {
-        goto done;
-    }
-
-    numTries++;
-
-    goto try_erase;
-
-done:
-    REG_WAITCNT = (REG_WAITCNT & ~WAITCNT_SRAM_MASK) | WAITCNT_SRAM_8;
-
-    return result;
-}
