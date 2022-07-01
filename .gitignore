@@ -1,3 +1,6 @@
 .vscode
 *.s
 *.o
+*.out
+*.bin
+*.elf
