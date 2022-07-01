@@ -170,12 +170,12 @@ template <const FlashInfo &T> static u16 ProgramByte(u8 *src, u8 *dest) {
     FLASH_WRITE(0x5555, 0xA0);
     *dest = *src;
 
-    return WaitForFlashWrite<T>(1, dest, *src);
+    return 0;
 }
 
 template <const FlashInfo &T> u16 EraseFlashSector(u16 sectorNum) {
     u16 numTries = 0;
-    u16 result;
+    u16 result = 0;
     u8 *addr;
     u16 readFlash1Buffer[0x20];
 
@@ -198,19 +198,19 @@ try_erase:
     FLASH_WRITE(0x2AAA, 0x55);
     *addr = 0x30;
 
-    // SetReadFlash1((u8 *)readFlash1Buffer);
+    //     // SetReadFlash1((u8 *)readFlash1Buffer);
 
-    result = WaitForFlashWrite<T>(2, addr, 0xFF);
+    //     result = WaitForFlashWrite<T>(2, addr, 0xFF);
 
-    if (!(result & 0xA000) || numTries > 3) {
-        goto done;
-    }
+    //     if (!(result & 0xA000) || numTries > 3) {
+    //         goto done;
+    //     }
 
-    numTries++;
+    //     numTries++;
 
-    goto try_erase;
+    //     goto try_erase;
 
-done:
+    // done:
     REG_WAITCNT = (REG_WAITCNT & ~WAITCNT_SRAM_MASK) | WAITCNT_SRAM_8;
 
     return result;

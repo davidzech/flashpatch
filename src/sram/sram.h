@@ -109,10 +109,7 @@ template <const FlashInfo &T> u8 *WriteSRAMChecked(u8 *src, u8 *dest, u32 size) 
                 *curBuf++ = *curSrc++;
             }
             // Flush buf back into Flash
-            u8 *result = (u8 *)ProgramFlashSectorAndVerify<T>(sectorNum, buf);
-            if (result != 0) {
-                return result;
-            }
+            ProgramFlashSector<T>(sectorNum, buf);
             bytesLeft -= bytesToWrite;
         }
 
