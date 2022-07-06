@@ -1,9 +1,5 @@
-#include <flash/flash_mx.h>
+#include <flash/flash.h>
 #include <sram/sram.h>
+using FlashChip = Flash::Chip<Flash::SST39SF512>;
 
-constexpr const FlashInfo &FlashChip() { return MX29L010; }
-
-extern "C" {
-void WriteSRAMUnchecked(u8 *src, u8 *dest, u32 size) { return WriteSRAMUnchecked<FlashChip()>(src, dest, size); }
-u8 *WriteSRAMChecked(u8 *src, u8 *dest, u32 size) { return WriteSRAMChecked<FlashChip()>(src, dest, size); }
-}
+void ROMInit() { FlashChip::Init(); }

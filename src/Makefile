@@ -7,7 +7,7 @@ all:
 	$(CC) $(CPPFLAGS) -S flashpatch.cpp
 	$(CC) $(CPPFLAGS) -c flashpatch.cpp	
 	$(CC) $(CPPFLAGS) flashpatch.cpp -o flashpatch.elf
-	llvm-objcopy -j .text -O binary flashpatch.elf flashpatch.bin
+	$(OBJCOPY) -j .text -O binary flashpatch.elf flashpatch.bin
 
 .PHONY: clean
 
