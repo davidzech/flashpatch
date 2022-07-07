@@ -88,7 +88,21 @@ template <const Flash::Info &F> class Journal {
         return Variable{.data = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}};
     }
 
-    static void WriteVar(u16 addr, Variable data);
+    static void WriteVar(u16 addr, Variable data) {
+        // Start from lowest address and write
+        auto activePartition = ActivePartition();
+        typename Chip::ReadByteFunc func;
+        for (int i = 0; i < PartitionMaxFrames; i++) {
+            Frame *f = &activePartition->frames[i];
+            u16 varAddr = Chip::Read(&f->addr, func);
+            if (varAddr == 0xFFFF) {
+                Chip::Write(data, &f->data);
+                return;
+            }
+        }
+
+        // we are filled
+    }
 
     static void TransferPartition();
 
