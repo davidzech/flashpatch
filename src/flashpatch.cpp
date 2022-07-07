@@ -8,4 +8,5 @@ using Journal = JFlash::Journal<FlashChip::Info>;
 void ROMInit() {
     FlashChip::Init();
     Journal::Init();
+    auto var = Journal::ReadVar(0x0);
 }

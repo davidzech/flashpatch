@@ -74,8 +74,10 @@ template <const Info &F = SST39SF512> class Chip {
     }
 
     struct ReadByteFunc {
+      private:
         u16 Code[2];
 
+      public:
         ReadByteFunc() {
             // ldrb r0, [r0]
             // bx lr
@@ -324,8 +326,7 @@ template <const Info &F = SST39SF512> class Chip {
         }
     }
 
-    template <class T> static T Read(const T *const src) {
-        ReadByteFunc readByte;
+    template <class T> static T Read(const T *const src, ReadByteFunc &readByte) {
         T out;
         u8 *buf = (u8 *)&out;
         u8 *addr = (u8 *)src;
@@ -333,6 +334,10 @@ template <const Info &F = SST39SF512> class Chip {
             buf[i] = readByte(&addr[i]);
         }
         return out;
+    }
+    template <class T> static T Read(const T *const src) {
+        ReadByteFunc func;
+        return Read(src, func);
     }
 };
 } // namespace Flash

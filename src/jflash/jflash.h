@@ -24,10 +24,15 @@ struct Header {
 };
 static_assert(sizeof(Header) == 4);
 
-struct Frame {
-    u16 addr;
+struct Variable {
     u8 data[8];
 };
+
+struct Frame {
+    u16 addr;
+    Variable data;
+};
+
 static_assert(sizeof(Frame) == 10);
 
 template <const Flash::Info &F> class Journal {
@@ -48,8 +53,8 @@ template <const Flash::Info &F> class Journal {
     static_assert(sizeof(Partition::frames) == sizeof(Frame) * PartitionMaxFrames);
     static_assert(sizeof(Partition::padding) < sizeof(Frame));
 
-    constexpr static Partition *Partition0() { return reinterpret_cast<Partition *>(FLASH_BASE); }
-    constexpr static Partition *Partition1() { return reinterpret_cast<Partition *>(FLASH_BASE + (F.type.romSize / 2)); }
+    static Partition *Partition0() { return reinterpret_cast<Partition *>(FLASH_BASE); }
+    static Partition *Partition1() { return reinterpret_cast<Partition *>(FLASH_BASE + (F.type.romSize / 2)); }
 
     static void Init() {
         auto p0hdr = Chip::Read(&Partition0()->header);
@@ -63,38 +68,40 @@ template <const Flash::Info &F> class Journal {
 
     static void Format() {
         Chip::EraseChip();
-        Header x = {.state = ACTIVE};
-        u16 *bytes = (u16 *)&x.b2;
-        Chip::Write(*bytes, &Partition0()->header.b2);
-        // Partition0()->header.Write(x.b2);
-        // Partition0()->header.Write(x.b3);
+        constexpr Header x = {.state = ACTIVE};
+        Chip::Write(x.b2, &Partition0()->header.b2);
+        Chip::Write(x.b3, &Partition0()->header.b3);
     };
 
-    static u64 ReadVar(u16 addr) {
+    static Variable ReadVar(u16 addr) {
         // Start from highest address in partition, and seek for what we are looking for
         auto activePartition = ActivePartition();
-
+        typename Chip::ReadByteFunc func;
         for (int i = PartitionMaxFrames; i > 0; i--) {
+            Frame *f = &activePartition->frames[i];
+            u16 varAddr = Chip::Read(&f->addr, func);
+            if (addr == varAddr) {
+                return Chip::Read(&f->data);
+            }
         }
+
+        return Variable{.data = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}};
     }
 
-    static void ReadVar(u16 addr, u8 buf[8]) { *reinterpret_cast<u64 *>(buf) = ReadVar(addr); };
-
-    static void WriteVar(u16 addr, u8 data[8]);
-    static void WriteVar(u16 addr, u64 data);
+    static void WriteVar(u16 addr, Variable data);
 
     static void TransferPartition();
 
     static Partition *ActivePartition() {
-        constexpr auto p0 = Partition0();
-        constexpr auto p1 = Partition1();
-        auto p0hdr = p0->header.Read();
+        auto p0 = Partition0();
+        auto p1 = Partition1();
+        auto p0hdr = Chip::Read(&p0->header);
 
         if (p0hdr.state == ACTIVE || p0hdr.state == SENDING) {
             return p0;
         }
 
-        auto p1hdr = p1->header.Read();
+        auto p1hdr = Chip::Read(&p1->header);
         if (p1hdr.state == ACTIVE || p1hdr.state == SENDING) {
             return p1;
         }
