@@ -53,10 +53,11 @@ template <const Info &F = SST39SF512> class Chip {
     }
 
   public:
-    static u16 WaitForFlashWrite(u8 phase, u8 *addr, u8 lastData);
-    static u32 VerifyFlashSector(u16 sectorNum, u8 *src);
+    Chip() = delete;
 
-    static void SwitchFlashBank(u16 sectorNum) {
+    static constexpr auto Info = F;
+
+    static void SwitchBank(u16 sectorNum) {
         // not supported yet
         return;
     }
@@ -151,7 +152,7 @@ template <const Info &F = SST39SF512> class Chip {
         REG_WAITCNT = (REG_WAITCNT & ~WAITCNT_SRAM_MASK) | WAITCNT_SRAM_8;
 
         if (F.type.romSize == FLASH_ROM_SIZE_1M) {
-            SwitchFlashBank(sectorNum / SECTORS_PER_BANK);
+            SwitchBank(sectorNum / SECTORS_PER_BANK);
             sectorNum %= SECTORS_PER_BANK;
         }
 
@@ -167,7 +168,7 @@ template <const Info &F = SST39SF512> class Chip {
 
         if (F.type.romSize == FLASH_ROM_SIZE_1M) {
             // determine sectorNum from src
-            // SwitchFlashBank(sectorNum / SECTORS_PER_BANK);
+            // SwitchBank(sectorNum / SECTORS_PER_BANK);
             // sectorNum %= SECTORS_PER_BANK;
         }
 
@@ -204,7 +205,7 @@ template <const Info &F = SST39SF512> class Chip {
             return 0x80FF;
         }
 
-        SwitchFlashBank(sectorNum / SECTORS_PER_BANK);
+        SwitchBank(sectorNum / SECTORS_PER_BANK);
         sectorNum %= SECTORS_PER_BANK;
 
     try_erase:
@@ -248,7 +249,7 @@ template <const Info &F = SST39SF512> class Chip {
             return result;
         }
 
-        SwitchFlashBank(sectorNum / SECTORS_PER_BANK);
+        SwitchBank(sectorNum / SECTORS_PER_BANK);
         sectorNum %= SECTORS_PER_BANK;
 
         // SetReadFlash1((u8 *)readFlash1Buffer);
@@ -307,7 +308,7 @@ template <const Info &F = SST39SF512> class Chip {
         // erase chip
         FLASH_WRITE(0x5555, 0x10);
 
-        result = WaitForFlashWrite(3, FLASH_BASE, 0xFF);
+        result = Wait(3, FLASH_BASE, 0xFF);
 
         REG_WAITCNT = (REG_WAITCNT & ~WAITCNT_SRAM_MASK) | WAITCNT_SRAM_8;
 
@@ -315,30 +316,23 @@ template <const Info &F = SST39SF512> class Chip {
     };
 
     static u32 VerifySector(u16 sectorNum, u8 *src) { return 0; }
-};
 
-template <class T, const Info &F> class Ptr {
-  private:
-    T internal;
-    void *addr;
-    using chip = Chip<F>;
-
-  public:
-    Ptr(void *s) : addr(s) {}
-    Ptr(u32 s) : addr(reinterpret_cast<void *>(s)) {}
-    Ptr(u8 *s) : addr(reinterpret_cast<void *>(s)) {}
-    T *Read() const {
-        chip::Read((u8 *)&internal, (u8 *)addr, sizeof(T));
-        return &internal;
-    }
-    u16 Write() const {
-        u8 *buf = (u8 *)&internal;
-        u8 *dest = (u8 *)addr;
+    template <class T> static void Write(const T &v, auto *dest) {
+        u8 *buf = (u8 *)&v;
         for (int i = 0; i < sizeof(T); i++) {
-            chip::WriteByte(&dest[i], buf[i], false);
+            WriteByte(dest, buf[i]);
         }
-        return chip::Wait(1, &dest[0], buf[0]);
+    }
+
+    template <class T> static T Read(const T *const src) {
+        ReadByteFunc readByte;
+        T out;
+        u8 *buf = (u8 *)&out;
+        u8 *addr = (u8 *)src;
+        for (int i = 0; i < sizeof(T); i++) {
+            buf[i] = readByte(&addr[i]);
+        }
+        return out;
     }
 };
-
 } // namespace Flash

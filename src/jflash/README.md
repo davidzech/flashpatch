@@ -47,6 +47,8 @@ cosntexpr u32 ERASING = 0x0000_0000;
 
 First step is to `init()` the Flash. This process will initialize the sector headers if uninitialized, or perform a complete Flash wipe if left in a corrupted state.
 
+### Writing Data
+
 On an `EEPROMWrite(u16 addr, u8 data[8])` we will fill the currently active sector with the following until full:
 
 ```c++
@@ -58,3 +60,6 @@ typedef struct {
 
 Once a partition is full, we will mark the current partition as `VALID` and the next partition as `RECEIVE`. We will then rollup the latest values of the variables we have stored, and copy them to the `RECEIVE`ing partition. The number of copies variables will always be less than or equal to what was before. Then we will mark the `RECEIVE` page as `ACTIVE`, and mark the previoius page as `ERASING`, and issue a sector erase command. Upon erase, the header will contain the default value for `ERASED(-1)`
 
+### Reading Data
+
+Starting from the highest address of the active partition, scan upwards until we find the variable we are looking for. If not found, we return all `0xFF`.
