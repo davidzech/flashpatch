@@ -197,7 +197,7 @@ template <const Info &F = SST39SF512> class Chip {
         return Wait(1, dest, byte);
     }
 
-    static u16 EraseSector(u16 sectorNum) {
+    static u16 EraseSector(u16 sectorNum, bool wait = true) {
         u16 numTries = 0;
         u16 result;
         u8 *addr;
@@ -222,15 +222,17 @@ template <const Info &F = SST39SF512> class Chip {
         FLASH_WRITE(0x2AAA, 0x55);
         *addr = 0x30;
 
-        result = Wait(2, addr, 0xFF);
+        if (wait) {
+            result = Wait(2, addr, 0xFF);
 
-        if (!(result & 0xA000) || numTries > 3) {
-            goto done;
+            if (!(result & 0xA000) || numTries > 3) {
+                goto done;
+            }
+
+            numTries++;
+
+            goto try_erase;
         }
-
-        numTries++;
-
-        goto try_erase;
 
     done:
         REG_WAITCNT = (REG_WAITCNT & ~WAITCNT_SRAM_MASK) | WAITCNT_SRAM_8;

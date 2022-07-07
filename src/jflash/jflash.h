@@ -7,18 +7,21 @@ namespace JFlash {
 
 enum State : u32 {
     ERASED = 0xFFFFFFFF,
-    RECEIVING = 0x00FFFFFF,
-    ACTIVE = 0x0000FFFF,
-    SENDING = 0x000000FF,
-    ERASING = 0x00000000,
+    RECEIVING = ERASED << 8,
+    ACTIVE = RECEIVING << 8,
+    SENDING = ACTIVE << 8,
+    ERASING = SENDING << 8,
 };
+
+static_assert(RECEIVING == 0xFFFFFF00);
+static_assert(ERASING == 0);
 
 struct Header {
     union {
-        u8 b0;
-        u8 b1;
-        u8 b2;
-        u8 b3;
+        u8 receiving;
+        u8 active;
+        u8 sending;
+        u8 erasing;
         State state;
     };
 };
@@ -48,6 +51,8 @@ template <const Flash::Info &F> class Journal {
         Header header;
         Frame frames[PartitionMaxFrames];
         u8 padding[(F.type.romSize / 2) - sizeof(header) - sizeof(frames)];
+
+        static constexpr int numSectors = F.type.sector.count / 2;
     };
     static_assert(sizeof(Partition) == (F.type.romSize / 2));
     static_assert(sizeof(Partition::frames) == sizeof(Frame) * PartitionMaxFrames);
@@ -69,8 +74,8 @@ template <const Flash::Info &F> class Journal {
     static void Format() {
         Chip::EraseChip();
         constexpr Header x = {.state = ACTIVE};
-        Chip::Write(x.b2, &Partition0()->header.b2);
-        Chip::Write(x.b3, &Partition0()->header.b3);
+        Chip::Write(x.receiving, &Partition0()->header.receiving);
+        Chip::Write(x.active, &Partition0()->header.active);
     };
 
     static Variable ReadVar(u16 addr) {
@@ -88,23 +93,58 @@ template <const Flash::Info &F> class Journal {
         return Variable{.data = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}};
     }
 
-    static void WriteVar(u16 addr, Variable data) {
+    static void WriteVar(u16 addr, const Variable &data) {
         // Start from lowest address and write
+        const Frame newFrame{.addr = addr, .data = data};
         auto activePartition = ActivePartition();
         typename Chip::ReadByteFunc func;
         for (int i = 0; i < PartitionMaxFrames; i++) {
             Frame *f = &activePartition->frames[i];
             u16 varAddr = Chip::Read(&f->addr, func);
             if (varAddr == 0xFFFF) {
-                Chip::Write(data, &f->data);
+                Chip::Write(newFrame, f);
                 return;
             }
         }
 
-        // we are filled
+        TransferPartition(activePartition, newFrame);
     }
 
-    static void TransferPartition();
+    static void TransferPartition(Partition *sending, const Frame &pendingFrame) {
+        Partition *receiving;
+        if (sending == Partition0()) {
+            receiving = Partition1();
+        } else {
+            receiving = Partition1();
+        }
+
+        // mark sending partition as sending
+        Chip::Write((u8)0x00, &sending->header.sending);
+        // mark receiving partition as receiving
+        Chip::Write((u8)0x00, &receiving->header.receiving);
+
+        // compact and transfer vars from sending O(N^2)
+        typename Chip::ReadByteFunc func;
+        for (int i = 0; i < PartitionMaxFrames; i++) {
+            Frame *f = &ActivePartition->frames[i];
+            u16 varAddr = Chip::Read(&f->addr, func);
+            if (varAddr != pendingFrame.addr && varAddr != 0xFFFF) {
+                WriteVar(varAddr, ReadVar(varAddr, func));
+            }
+        }
+
+        // write pending variable
+        WriteVar(pendingFrame.addr, pendingFrame.data);
+
+        // mark receiving partition as active
+        Chip::Write((u8)0x00, &receiving->header.active);
+        // mark sending partition as erasing
+        Chip::Write((u8)0x00, &sending->header.erasing);
+        // dispatch erase command on all sectors of partition but don't wait on sending.
+        for (u16 sector = 0; sector < sending->numSectors; sector++) {
+            Chip::EraseSector(sector, false); // might be dangerous to not wait
+        }
+    }
 
     static Partition *ActivePartition() {
         auto p0 = Partition0();
