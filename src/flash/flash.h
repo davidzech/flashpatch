@@ -140,13 +140,13 @@ template <const Info &F = SST39SF512> class Chip {
             Code[8] = 0x4770;
         }
 
-        void operator()(u8 *dest, u8 *src, u32 size) {
+        void operator()(u8 *dest, u8 *src, u32 size) const {
             auto func = decltype(&ReadFlashCore)((uintptr_t)Code + 1);
             return func(dest, src, size);
         }
     };
 
-    static void Read(u16 sectorNum, u32 offset, u8 *dest, u32 size) {
+    static void ReadSector(u16 sectorNum, u32 offset, u8 *dest, u32 size) {
         u8 *src;
         u16 i;
         ReadCoreFunc readFlashCore;
@@ -163,7 +163,7 @@ template <const Info &F = SST39SF512> class Chip {
         readFlashCore(dest, src, size);
     }
 
-    static void Read(u8 *dest, u8 *src, u32 size) {
+    static void ReadMem(u8 *dest, u8 *src, u32 size) {
         ReadCoreFunc readFlashCore;
 
         REG_WAITCNT = (REG_WAITCNT & ~WAITCNT_SRAM_MASK) | WAITCNT_SRAM_8;
@@ -321,11 +321,15 @@ template <const Info &F = SST39SF512> class Chip {
 
     static u32 VerifySector(u16 sectorNum, u8 *src) { return 0; }
 
-    template <class T> static void Write(const T &v, auto *dest) {
+    template <class T> static u16 Write(const T &v, auto *dest) {
         u8 *buf = (u8 *)&v;
         for (int i = 0; i < sizeof(T); i++) {
-            WriteByte(dest, buf[i]);
+            auto result = WriteByte((u8 *)dest, buf[i]);
+            if (result != 0) {
+                return result;
+            }
         }
+        return 0;
     }
 
     template <class T> static T Read(const T *const src, ReadByteFunc &readByte) {
@@ -337,6 +341,7 @@ template <const Info &F = SST39SF512> class Chip {
         }
         return out;
     }
+
     template <class T> static T Read(const T *const src) {
         ReadByteFunc func;
         return Read(src, func);
