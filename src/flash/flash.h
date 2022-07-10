@@ -91,7 +91,7 @@ template <const Info &F = SST39SF512> class Chip {
         }
     };
 
-    __attribute__((noinline)) static u16 Wait(u8 phase, u8 *addr, u8 lastData) {
+    static u16 Wait(u8 phase, u8 *addr, u8 lastData) {
         u16 result = 0;
         u16 delay = 2000;
         ReadByteFunc readFlashByte;
@@ -148,7 +148,6 @@ template <const Info &F = SST39SF512> class Chip {
 
     static void ReadSector(u16 sectorNum, u32 offset, u8 *dest, u32 size) {
         u8 *src;
-        u16 i;
         ReadCoreFunc readFlashCore;
 
         REG_WAITCNT = (REG_WAITCNT & ~WAITCNT_SRAM_MASK) | WAITCNT_SRAM_8;
@@ -178,30 +177,35 @@ template <const Info &F = SST39SF512> class Chip {
     }
 
     static u16 WriteByte(u8 *dest, u8 *src, bool wait = true) {
+        REG_WAITCNT = (REG_WAITCNT & ~WAITCNT_SRAM_MASK) | F.type.wait[0];
 
         FLASH_WRITE(0x5555, 0xAA);
         FLASH_WRITE(0x2AAA, 0x55);
         FLASH_WRITE(0x5555, 0xA0);
         *dest = *src;
 
-        return Wait(1, dest, *src);
+        if (wait)
+            return Wait(1, dest, *src);
+        return 0;
     }
 
-    static u16 WriteByte(u8 *dest, u8 byte, bool wait = true) {
+    static u16 WriteByte(u8 *dest, u8 b, bool wait = true) {
+        REG_WAITCNT = (REG_WAITCNT & ~WAITCNT_SRAM_MASK) | F.type.wait[0];
 
         FLASH_WRITE(0x5555, 0xAA);
         FLASH_WRITE(0x2AAA, 0x55);
         FLASH_WRITE(0x5555, 0xA0);
-        *dest = byte;
+        dest[0] = (u8)b;
 
-        return Wait(1, dest, byte);
+        if (wait)
+            return Wait(1, dest, b);
+        return 0;
     }
 
     static u16 EraseSector(u16 sectorNum, bool wait = true) {
         u16 numTries = 0;
         u16 result;
         u8 *addr;
-        u16 readFlash1Buffer[0x20];
 
         if (sectorNum >= F.type.sector.count) {
             return 0x80FF;
@@ -321,10 +325,11 @@ template <const Info &F = SST39SF512> class Chip {
 
     static u32 VerifySector(u16 sectorNum, u8 *src) { return 0; }
 
-    template <class T> static u16 Write(const T &v, auto *dest) {
+    template <class T> static u16 Write(const T &v, const T *dest) {
         u8 *buf = (u8 *)&v;
+        u8 *dst = (u8 *)dest;
         for (int i = 0; i < sizeof(T); i++) {
-            auto result = WriteByte((u8 *)dest, buf[i]);
+            auto result = WriteByte(&dst[i], buf[i], false);
             if (result != 0) {
                 return result;
             }

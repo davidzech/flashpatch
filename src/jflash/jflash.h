@@ -18,25 +18,38 @@ static_assert(ERASING == 0);
 
 struct Header {
     union {
-        u8 receiving;
-        u8 active;
-        u8 sending;
-        u8 erasing;
+        struct {
+            u8 receiving;
+            u8 active;
+            u8 sending;
+            u8 erasing;
+        };
         State state;
     };
+    u32 reserved[3];
 };
-static_assert(sizeof(Header) == 4);
+static_assert(sizeof(Header) == 16);
 
 struct Variable {
     u8 data[8];
+
+    bool operator==(const Variable &other) const {
+        for (int i = 0; i < sizeof(data); i++) {
+            if (data[i] != other.data[i]) {
+                return false;
+            }
+        }
+        return true;
+    }
 };
 
 struct Frame {
     u16 addr;
+    u8 reserved[6] = {0, 0, 0, 0, 0, 0};
     Variable data;
 };
 
-static_assert(sizeof(Frame) == 10);
+static_assert(sizeof(Frame) == 16);
 
 template <const Flash::Info &F> class Journal {
   private:
@@ -66,16 +79,16 @@ template <const Flash::Info &F> class Journal {
         auto p1hdr = Chip::Read(&Partition1()->header);
         if (p0hdr.state == ACTIVE && p1hdr.state != ERASED) {
             Format();
-        } else if (p0hdr.state == ERASED && p1hdr.state == ACTIVE) {
+        }
+        if (p0hdr.state == ERASED && p1hdr.state != ACTIVE) {
             Format();
         }
     }
 
     static void Format() {
         Chip::EraseChip();
-        constexpr Header x = {.state = ACTIVE};
-        Chip::Write(x.receiving, &Partition0()->header.receiving);
-        Chip::Write(x.active, &Partition0()->header.active);
+        Chip::Write((u8)0x00, (u8 *)&Partition0()->header.receiving);
+        Chip::Write((u8)0x00, (u8 *)&Partition0()->header.active);
     };
 
     static Variable ReadVar(u16 addr, typename Chip::ReadByteFunc &func) {
@@ -85,6 +98,9 @@ template <const Flash::Info &F> class Journal {
             u16 varAddr = Chip::Read(&f->addr, func);
             if (addr == varAddr) {
                 return Chip::Read(&f->data);
+            }
+            if (addr == 0xFFFF) {
+                break;
             }
         }
 
@@ -96,16 +112,23 @@ template <const Flash::Info &F> class Journal {
         return ReadVar(addr, func);
     }
 
-    static u16 WriteVar(u16 addr, const Variable &data) {
-        // Start from lowest address and write
+    static u16 WriteVar(u16 addr, const Variable &data) { // Start from lowest address and write
         const Frame newFrame{.addr = addr, .data = data};
         auto activePartition = ActivePartition();
         typename Chip::ReadByteFunc func;
+
+        bool different = true;
         for (int i = 0; i < PartitionMaxFrames; i++) {
             Frame *f = &activePartition->frames[i];
             u16 varAddr = Chip::Read(&f->addr, func);
+            if (varAddr == addr) {
+                Variable prev = Chip::Read(&f->data, func);
+                different = prev != data;
+            }
             if (varAddr == 0xFFFF) {
-                Chip::Write(newFrame, f);
+                if (different) {
+                    Chip::Write(newFrame, f);
+                }
                 return 0;
             }
         }
