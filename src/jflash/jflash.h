@@ -75,12 +75,8 @@ template <const Flash::Info &F> class Journal {
     static Partition *Partition1() { return reinterpret_cast<Partition *>(FLASH_BASE + (F.type.romSize / 2)); }
 
     static void Init() {
-        auto p0hdr = Chip::Read(&Partition0()->header);
-        auto p1hdr = Chip::Read(&Partition1()->header);
-        if (p0hdr.state == ACTIVE && p1hdr.state != ERASED) {
-            Format();
-        }
-        if (p0hdr.state == ERASED && p1hdr.state != ACTIVE) {
+        auto activePart = MaybeActivePartition();
+        if (activePart == nullptr) {
             Format();
         }
     }
@@ -113,24 +109,27 @@ template <const Flash::Info &F> class Journal {
     }
 
     static u16 WriteVar(u16 addr, const Variable &data) { // Start from lowest address and write
+        s16 *lastAddr = (s16 *)0x203fff0;
+
         const Frame newFrame{.addr = addr, .data = data};
         auto activePartition = ActivePartition();
         typename Chip::ReadByteFunc func;
 
-        bool different = true;
-        for (int i = 0; i < PartitionMaxFrames; i++) {
-            Frame *f = &activePartition->frames[i];
-            u16 varAddr = Chip::Read(&f->addr, func);
-            if (varAddr == addr) {
-                Variable prev = Chip::Read(&f->data, func);
-                different = prev != data;
-            }
-            if (varAddr == 0xFFFF) {
-                if (different) {
+        if (*lastAddr == 0) {
+            for (int i = 0; i < PartitionMaxFrames; i++) {
+                Frame *f = &activePartition->frames[i];
+                u16 varAddr = Chip::Read(&f->addr, func);
+                if (varAddr == 0xFFFF) {
                     Chip::Write(newFrame, f);
+                    *lastAddr = i;
+                    return 0;
                 }
-                return 0;
             }
+        } else if (*lastAddr < PartitionMaxFrames) {
+            Frame *f = &activePartition->frames[*lastAddr + 1];
+            Chip::Write(newFrame, f);
+            *lastAddr += 1;
+            return 0;
         }
 
         return TransferPartition(activePartition, newFrame);
@@ -180,7 +179,7 @@ template <const Flash::Info &F> class Journal {
         return 0;
     }
 
-    static Partition *ActivePartition() {
+    static Partition *MaybeActivePartition() {
         auto p0 = Partition0();
         auto p1 = Partition1();
         auto p0hdr = Chip::Read(&p0->header);
@@ -195,6 +194,15 @@ template <const Flash::Info &F> class Journal {
         }
 
         return nullptr;
+    }
+
+    static Partition *ActivePartition() {
+        auto part = MaybeActivePartition();
+        if (part == nullptr) {
+            Format();
+        }
+
+        return Partition0();
     }
 };
 

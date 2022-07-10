@@ -15,9 +15,11 @@ __attribute__((naked, target("no-thumb-mode"))) void Entrypoint() {
     asm(".orig: .long 0x080000c0");
 }
 
-void ROMInit() {
-    FlashChip::Init();
+void ROMInit() { FlashChip::Init(); }
+
+u16 EEPROMConfigure(u16) {
     Journal::Init();
+    return 0;
 }
 
 u16 EEPROMWrite(u16 addr, u8 data[8], bool8 wait) {

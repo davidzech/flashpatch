@@ -329,7 +329,7 @@ template <const Info &F = SST39SF512> class Chip {
         u8 *buf = (u8 *)&v;
         u8 *dst = (u8 *)dest;
         for (int i = 0; i < sizeof(T); i++) {
-            auto result = WriteByte(&dst[i], buf[i], false);
+            auto result = WriteByte(&dst[i], buf[i]);
             if (result != 0) {
                 return result;
             }
