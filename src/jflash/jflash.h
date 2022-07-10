@@ -53,6 +53,8 @@ static_assert(sizeof(Frame) == 16);
 
 template <const Flash::Info &F> class Journal {
   private:
+    constexpr static s16 *LastAddr() { return (s16 *)(0x203fff0); }
+
   public:
     Journal() = delete;
     using Chip = Flash::Chip<F>;
@@ -88,8 +90,12 @@ template <const Flash::Info &F> class Journal {
     };
 
     static Variable ReadVar(u16 addr, typename Chip::ReadByteFunc &func) {
+        s16 *lastAddr = LastAddr();
+
+        int end = (*lastAddr != 0) ? 1 + *lastAddr : PartitionMaxFrames;
+
         auto activePartition = ActivePartition();
-        for (int i = PartitionMaxFrames; i > 0; i--) {
+        for (int i = end; i > 0; i--) {
             Frame *f = &activePartition->frames[i];
             u16 varAddr = Chip::Read(&f->addr, func);
             if (addr == varAddr) {
@@ -109,7 +115,7 @@ template <const Flash::Info &F> class Journal {
     }
 
     static u16 WriteVar(u16 addr, const Variable &data) { // Start from lowest address and write
-        s16 *lastAddr = (s16 *)0x203fff0;
+        s16 *lastAddr = LastAddr();
 
         const Frame newFrame{.addr = addr, .data = data};
         auto activePartition = ActivePartition();
