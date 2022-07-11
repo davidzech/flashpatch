@@ -35,4 +35,13 @@ u16 EEPROMRead(u16 address, u8 data[8]) {
 
     return 0;
 }
+
+void __aeabi_memcpy(void *dest, void *src, size_t n) {
+    u8 *d = (u8 *)dest;
+    u8 *s = (u8 *)src;
+    while (n != 0) {
+        *d++ = *s++;
+        n--;
+    }
+}
 }

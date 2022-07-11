@@ -37,7 +37,7 @@ constexpr Info SST39SF512 = {.maxTime = mxMaxTime,
                                       .sector = {
                                           .size = 4096,
                                           .shift = 12,
-                                          .count = 8,
+                                          .count = 16,
                                           .top = 0,
                                       }}};
 
@@ -203,7 +203,7 @@ template <const Info &F = SST39SF512> class Chip {
     }
 
     static u16 EraseSector(u16 sectorNum, bool wait = true) {
-        u16 numTries = 0;
+        constexpr int numTries = 3;
         u16 result;
         u8 *addr;
 
@@ -214,31 +214,27 @@ template <const Info &F = SST39SF512> class Chip {
         SwitchBank(sectorNum / SECTORS_PER_BANK);
         sectorNum %= SECTORS_PER_BANK;
 
-    try_erase:
-        REG_WAITCNT = (REG_WAITCNT & ~WAITCNT_SRAM_MASK) | F.type.wait[0];
+        for (int i = 0; i < numTries; i++) {
+            REG_WAITCNT = (REG_WAITCNT & ~WAITCNT_SRAM_MASK) | F.type.wait[0];
 
-        addr = FLASH_BASE + (sectorNum << F.type.sector.shift);
+            addr = FLASH_BASE + (sectorNum << F.type.sector.shift);
 
-        FLASH_WRITE(0x5555, 0xAA);
-        FLASH_WRITE(0x2AAA, 0x55);
-        FLASH_WRITE(0x5555, 0x80);
-        FLASH_WRITE(0x5555, 0xAA);
-        FLASH_WRITE(0x2AAA, 0x55);
-        *addr = 0x30;
+            FLASH_WRITE(0x5555, 0xAA);
+            FLASH_WRITE(0x2AAA, 0x55);
+            FLASH_WRITE(0x5555, 0x80);
+            FLASH_WRITE(0x5555, 0xAA);
+            FLASH_WRITE(0x2AAA, 0x55);
+            *addr = 0x30;
 
-        if (wait) {
-            result = Wait(2, addr, 0xFF);
+            if (wait) {
+                result = Wait(2, addr, 0xFF);
 
-            if (!(result & 0xA000) || numTries > 3) {
-                goto done;
+                if (result == 0) {
+                    break;
+                }
             }
-
-            numTries++;
-
-            goto try_erase;
         }
 
-    done:
         REG_WAITCNT = (REG_WAITCNT & ~WAITCNT_SRAM_MASK) | WAITCNT_SRAM_8;
 
         return result;

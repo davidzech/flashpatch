@@ -1,8 +1,8 @@
 #pragma once
 
+#include <common/utils.h>
 #include <flash/flash.h>
 #include <gba/types.h>
-
 namespace JFlash {
 
 enum State : u32 {
@@ -51,30 +51,29 @@ struct Frame {
 
 static_assert(sizeof(Frame) == 16);
 
-template <const Flash::Info &F> class Journal {
-  private:
-    constexpr static s16 *LastAddr() { return (s16 *)(0x203fff0); }
-
+template <const Flash::Info &F, const int EEPROMSize = (8 * 1024)> class Journal {
   public:
     Journal() = delete;
     using Chip = Flash::Chip<F>;
 
-    constexpr static int PartitionMaxFrames = ((F.type.romSize / 2) - sizeof(Header)) / sizeof(Frame);
+    constexpr static int PartitionMaxFrames = ((F.type.romSize / 2) / sizeof(Frame)) - 1;
     constexpr static int TotalFrames = PartitionMaxFrames * 2;
+    constexpr static int NumVars = EEPROMSize / sizeof(Variable);
 
     struct Partition {
         Header header;
         Frame frames[PartitionMaxFrames];
-        u8 padding[(F.type.romSize / 2) - sizeof(header) - sizeof(frames)];
 
         static constexpr int numSectors = F.type.sector.count / 2;
     };
     static_assert(sizeof(Partition) == (F.type.romSize / 2));
     static_assert(sizeof(Partition::frames) == sizeof(Frame) * PartitionMaxFrames);
-    static_assert(sizeof(Partition::padding) < sizeof(Frame));
+    static_assert(sizeof(Partition::frames) + sizeof(Partition::header) == F.type.romSize / 2);
+    static_assert(Partition::numSectors > 0);
 
     static Partition *Partition0() { return reinterpret_cast<Partition *>(FLASH_BASE); }
     static Partition *Partition1() { return reinterpret_cast<Partition *>(FLASH_BASE + (F.type.romSize / 2)); }
+    constexpr static s16 *LastFrameIndex() { return (s16 *)0x203fff0; }
 
     static void Init() {
         auto activePart = MaybeActivePartition();
@@ -89,12 +88,15 @@ template <const Flash::Info &F> class Journal {
         Chip::Write((u8)0x00, (u8 *)&Partition0()->header.active);
     };
 
-    static Variable ReadVar(u16 addr, typename Chip::ReadByteFunc &func) {
-        s16 *lastAddr = LastAddr();
+    static Maybe<Variable> MaybeReadVar(u16 addr, typename Chip::ReadByteFunc &func, Partition *activePartition = nullptr, bool useLast = true) {
+        if (activePartition == nullptr) {
+            activePartition = ActivePartition();
+        }
 
-        int end = (*lastAddr != 0) ? 1 + *lastAddr : PartitionMaxFrames;
+        s16 *lastAddr = LastFrameIndex();
 
-        auto activePartition = ActivePartition();
+        int end = (useLast && *lastAddr != 0) ? 1 + *lastAddr : PartitionMaxFrames;
+
         for (int i = end; i > 0; i--) {
             Frame *f = &activePartition->frames[i];
             u16 varAddr = Chip::Read(&f->addr, func);
@@ -106,22 +108,37 @@ template <const Flash::Info &F> class Journal {
             }
         }
 
+        return nullptr;
+    }
+
+    static Variable ReadVar(u16 addr, typename Chip::ReadByteFunc &func, Partition *activePartition = nullptr) {
+        if (activePartition == nullptr) {
+            activePartition = ActivePartition();
+        }
+
+        Maybe<Variable> var = MaybeReadVar(addr, func, activePartition);
+        if (var) {
+            return *var;
+        }
         return Variable{.data = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}};
     }
 
-    static Variable ReadVar(u16 addr) {
+    static Variable ReadVar(u16 addr, Partition *activePartition = nullptr) {
         typename Chip::ReadByteFunc func;
-        return ReadVar(addr, func);
+        return ReadVar(addr, func, activePartition);
     }
 
-    static u16 WriteVar(u16 addr, const Variable &data) { // Start from lowest address and write
-        s16 *lastAddr = LastAddr();
+    static u16 WriteVar(u16 addr, const Variable &data, Partition *activePartition = nullptr, bool useLast = true) { // Start from lowest address and write
+        if (activePartition == nullptr) {
+            activePartition = ActivePartition();
+        }
+
+        s16 *lastAddr = LastFrameIndex();
 
         const Frame newFrame{.addr = addr, .data = data};
-        auto activePartition = ActivePartition();
         typename Chip::ReadByteFunc func;
 
-        if (*lastAddr == 0) {
+        if (!useLast || *lastAddr == 0) {
             for (int i = 0; i < PartitionMaxFrames; i++) {
                 Frame *f = &activePartition->frames[i];
                 u16 varAddr = Chip::Read(&f->addr, func);
@@ -131,7 +148,7 @@ template <const Flash::Info &F> class Journal {
                     return 0;
                 }
             }
-        } else if (*lastAddr < PartitionMaxFrames) {
+        } else if (useLast && *lastAddr < PartitionMaxFrames - 1) {
             Frame *f = &activePartition->frames[*lastAddr + 1];
             Chip::Write(newFrame, f);
             *lastAddr += 1;
@@ -142,11 +159,13 @@ template <const Flash::Info &F> class Journal {
     }
 
     static u16 TransferPartition(Partition *sending, const Frame &pendingFrame) {
+        int sectorStart = 0;
         Partition *receiving;
         if (sending == Partition0()) {
             receiving = Partition1();
         } else {
-            receiving = Partition1();
+            sectorStart = F.type.sector.count / 2;
+            receiving = Partition0();
         }
 
         // mark sending partition as sending
@@ -154,13 +173,17 @@ template <const Flash::Info &F> class Journal {
         // mark receiving partition as receiving
         Chip::Write((u8)0x00, &receiving->header.receiving);
 
-        // compact and transfer vars from sending O(N^2)
+        *LastFrameIndex() = 0;
+        // transfer latest vars
         typename Chip::ReadByteFunc func;
-        for (int i = 0; i < PartitionMaxFrames; i++) {
-            Frame *f = &ActivePartition()->frames[i];
-            u16 varAddr = Chip::Read(&f->addr, func);
-            if (varAddr != pendingFrame.addr && varAddr != 0xFFFF) {
-                auto result = WriteVar(varAddr, ReadVar(varAddr, func));
+        for (int i = 0; i < NumVars; i++) {
+            if (i == pendingFrame.addr) {
+                continue;
+            }
+            // disable lastFrame usage for reading
+            auto maybeVar = MaybeReadVar(i, func, sending, false);
+            if (maybeVar) {
+                auto result = WriteVar(i, *maybeVar, receiving, false);
                 if (result != 0) {
                     return result;
                 }
@@ -168,21 +191,33 @@ template <const Flash::Info &F> class Journal {
         }
 
         // write pending variable
-        auto result = WriteVar(pendingFrame.addr, pendingFrame.data);
-        if (!result) {
+        auto result = WriteVar(pendingFrame.addr, pendingFrame.data, receiving, false);
+        if (result != 0) {
             return result;
         }
 
         // mark receiving partition as active
-        Chip::Write((u8)0x00, &receiving->header.active);
+        result = Chip::Write((u8)0x00, (u8 *)&receiving->header.active);
+        if (result != 0) {
+            return result;
+        }
         // mark sending partition as erasing
-        Chip::Write((u8)0x00, &sending->header.erasing);
-        // dispatch erase command on all sectors of partition but don't wait on sending.
-        for (u16 sector = 0; sector < sending->numSectors; sector++) {
-            Chip::EraseSector(sector, false); // might be dangerous to not wait
+        result = Chip::Write((u8)0x00, (u8 *)&sending->header.erasing);
+        if (result != 0) {
+            return result;
         }
 
-        return 0;
+        // dispatch erase command on all sectors of partition but don't wait on sending.
+        for (int sector = 0; sector < Partition::numSectors; sector++) {
+            u16 result = Chip::EraseSector(sectorStart + sector, true);
+            if (result != 0) {
+                return result;
+            }
+        }
+
+        *LastFrameIndex() = 0;
+
+        return result;
     }
 
     static Partition *MaybeActivePartition() {
@@ -206,9 +241,10 @@ template <const Flash::Info &F> class Journal {
         auto part = MaybeActivePartition();
         if (part == nullptr) {
             Format();
+            return Partition0();
         }
 
-        return Partition0();
+        return part;
     }
 };
 

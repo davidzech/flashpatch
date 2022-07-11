@@ -2,7 +2,7 @@ SHELL := /bin/bash
 CC=clang
 OBJCOPY=llvm-objcopy
 ARCH=--target=arm-none-eabi
-CPPFLAGS=-std=c++20 $(ARCH) -O1  -Wall -fno-exceptions -nostdlib -nodefaultlibs -fno-builtin -I./ -frwpi -Wl,--entry=0
+CPPFLAGS=-std=c++20 $(ARCH) -O1 -Wall -Wunreachable-code -fno-exceptions -nostdlib -nodefaultlibs -fno-builtin -I./ -frwpi -Wl,--entry=0
 all:
 	$(CC) $(CPPFLAGS) -S flashpatch.cpp
 	$(CC) $(CPPFLAGS) -c flashpatch.cpp	
