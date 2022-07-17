@@ -149,7 +149,7 @@ template <const Flash::Info &F, const int EEPROMSize = (8 * 1024)> class Journal
         s16 LastFrameIndex;
     };
 
-    __attribute__((always_inline)) static globals *Globals() { return (globals *)(EWRAM + EWRAM_SIZE - 1) - sizeof(globals); }
+    __attribute__((always_inline)) static globals *Globals() { return (globals *)((EWRAM + EWRAM_SIZE - 1) - sizeof(globals)); }
     __attribute__((always_inline)) static Partition *Partition0() { return reinterpret_cast<Partition *>(FLASH_BASE); }
     __attribute__((always_inline)) static Partition *Partition1() { return reinterpret_cast<Partition *>(FLASH_BASE + (F.type.romSize / 2)); }
 
@@ -167,15 +167,16 @@ template <const Flash::Info &F, const int EEPROMSize = (8 * 1024)> class Journal
         Chip::Write((u8)0x00, (u8 *)&Partition0()->header.active);
     };
 
-    static Maybe<Variable> MaybeReadVar(u16 addr, typename Chip::ReadByteFunc &func, Partition *activePartition = nullptr, bool useHint = true) {
+    static Maybe<Variable> MaybeReadVar(u16 addr, typename Chip::ReadByteFunc &func, Partition *activePartition = nullptr, bool useHint = false) {
         if (activePartition == nullptr) {
             activePartition = ActivePartition();
         }
 
         int end = PartitionMaxFrames - 1;
+        auto &lookupTable = Globals()->LookupTable;
 
         if (useHint) {
-            int hintAddr = Globals()->LookupTable[addr];
+            int hintAddr = lookupTable[addr];
             if (hintAddr != 0) {
                 end = (hintAddr << 3);
             }
@@ -184,8 +185,8 @@ template <const Flash::Info &F, const int EEPROMSize = (8 * 1024)> class Journal
         for (int i = end - 1; i >= 0; i--) {
             Frame *f = &activePartition->frames[i];
             u16 varAddr = Chip::Read(&f->addr, func);
-            if (varAddr != 0xFFFF) {
-                Globals()->LookupTable[varAddr] = (u8)(i >> 3);
+            if (useHint && varAddr != 0xFFFF) {
+                lookupTable[varAddr] = (u8)(i >> 3) + 1;
             }
             if (addr == varAddr) {
                 return Chip::Read(&f->data);
@@ -212,34 +213,33 @@ template <const Flash::Info &F, const int EEPROMSize = (8 * 1024)> class Journal
         return ReadVar(addr, func, activePartition);
     }
 
-    static u16 WriteVar(u16 addr, const Variable &data, Partition *activePartition = nullptr, bool useHint = true) { // Start from lowest address and write
+    static u16 WriteVar(u16 addr, const Variable &data, Partition *activePartition = nullptr, bool useHint = false) { // Start from lowest address and write
         if (activePartition == nullptr) {
             activePartition = ActivePartition();
         }
 
-        s16 &lastAddr = Globals()->LastFrameIndex;
+        s16 &lastFrame = Globals()->LastFrameIndex;
 
         const Frame newFrame{.addr = addr, .data = data};
         typename Chip::ReadByteFunc func;
 
-        if (!useHint || lastAddr == 0) {
+        if (!useHint || lastFrame == 0) {
             for (int i = 0; i < PartitionMaxFrames; i++) {
                 Frame *f = &activePartition->frames[i];
                 u16 varAddr = Chip::Read(&f->addr, func);
                 if (varAddr == 0xFFFF) {
-                    if (useHint)
-                        Globals()->LookupTable[addr] = (u8)(i >> 3);
-                    Chip::Write(newFrame, f);
-                    lastAddr = i;
-                    return 0;
+                    if (useHint) {
+                        lastFrame = i;
+                        Globals()->LookupTable[addr] = (u8)(i >> 3) + 1;
+                    }
+                    return Chip::Write(newFrame, f);
                 }
             }
-        } else if (useHint && lastAddr < PartitionMaxFrames - 1) {
-            Frame *f = &activePartition->frames[lastAddr + 1];
-            Globals()->LookupTable[addr] = (u8)((lastAddr + 1) >> 3);
-            Chip::Write(newFrame, f);
-            lastAddr += 1;
-            return 0;
+        } else if (useHint && lastFrame < PartitionMaxFrames - 1) {
+            Frame *f = &activePartition->frames[lastFrame + 1];
+            Globals()->LookupTable[addr] = (u8)((lastFrame + 1) >> 3) + 1;
+            lastFrame += 1;
+            return Chip::Write(newFrame, f);
         }
 
         return TransferPartition(activePartition, newFrame);
@@ -266,7 +266,7 @@ template <const Flash::Info &F, const int EEPROMSize = (8 * 1024)> class Journal
 
         // transfer latest vars, by scanning once from the highest address
         typename Chip::ReadByteFunc func;
-        for (int i = NumVars - 1; i <= 0; i--) {
+        for (int i = PartitionMaxFrames - 1; i <= 0; i--) {
             if (i == pendingFrame.addr) {
                 continue;
             }
