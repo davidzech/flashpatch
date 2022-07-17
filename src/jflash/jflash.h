@@ -149,7 +149,7 @@ template <const Flash::Info &F, const int EEPROMSize = (8 * 1024)> class Journal
         s16 LastFrameIndex;
     };
 
-    __attribute__((always_inline)) static globals *Globals() { return (globals *)((EWRAM + EWRAM_SIZE - 1) - sizeof(globals)); }
+    __attribute__((always_inline)) static globals *Globals() { return reinterpret_cast<globals *>(((EWRAM + EWRAM_SIZE - 1) - sizeof(globals)) & -4); }
     __attribute__((always_inline)) static Partition *Partition0() { return reinterpret_cast<Partition *>(FLASH_BASE); }
     __attribute__((always_inline)) static Partition *Partition1() { return reinterpret_cast<Partition *>(FLASH_BASE + (F.type.romSize / 2)); }
 
@@ -176,7 +176,7 @@ template <const Flash::Info &F, const int EEPROMSize = (8 * 1024)> class Journal
         auto &lookupTable = Globals()->LookupTable;
 
         if (useHint) {
-            int hintAddr = lookupTable[addr];
+            int hintAddr = static_cast<int>(lookupTable[addr]);
             if (hintAddr != 0) {
                 end = (hintAddr << 3);
             }
@@ -213,7 +213,7 @@ template <const Flash::Info &F, const int EEPROMSize = (8 * 1024)> class Journal
         return ReadVar(addr, func, activePartition);
     }
 
-    static u16 WriteVar(u16 addr, const Variable &data, Partition *activePartition = nullptr, bool useHint = false) { // Start from lowest address and write
+    static u16 WriteVar(u16 addr, const Variable &data, Partition *activePartition = nullptr, bool useHint = true) { // Start from lowest address and write
         if (activePartition == nullptr) {
             activePartition = ActivePartition();
         }
@@ -245,7 +245,7 @@ template <const Flash::Info &F, const int EEPROMSize = (8 * 1024)> class Journal
         return TransferPartition(activePartition, newFrame);
     }
 
-    static u16 TransferPartition(Partition *sending, const Frame &pendingFrame) {
+    static u16 TransferPartition(Partition *sending, const Frame &pendingFrame, bool useHint = true) {
         int sectorStart = 0;
         Partition *receiving;
         if (sending == Partition0()) {
@@ -263,24 +263,24 @@ template <const Flash::Info &F, const int EEPROMSize = (8 * 1024)> class Journal
         Globals()->LastFrameIndex = 0;
         auto &compactProgress = Globals()->CompactProgress;
         compactProgress.Reset();
+        compactProgress[pendingFrame.addr] = true;
 
         // transfer latest vars, by scanning once from the highest address
         typename Chip::ReadByteFunc func;
-        for (int i = PartitionMaxFrames - 1; i <= 0; i--) {
-            if (i == pendingFrame.addr) {
-                continue;
-            }
+        for (int i = PartitionMaxFrames - 1; i >= 0; i--) {
 
             Frame *f = &sending->frames[i];
             u16 varAddr = Chip::Read(&f->addr, func);
             if (varAddr != 0xFFFF) {
-                // check if we have already hadded this variable
-                if (bool(compactProgress[varAddr])) {
+                // check if we have already added this variable
+                auto &&prog = compactProgress[varAddr];
+                if (prog == true) {
                     continue;
                 }
-                auto var = Chip::Read(&f->data);
+                prog = true;
+                Variable var = Chip::Read(&f->data);
 
-                auto result = WriteVar(varAddr, var, receiving);
+                auto result = WriteVar(varAddr, var, receiving, useHint);
                 if (result != 0) {
                     return result;
                 }
@@ -288,7 +288,7 @@ template <const Flash::Info &F, const int EEPROMSize = (8 * 1024)> class Journal
         }
 
         // write pending variable
-        auto result = WriteVar(pendingFrame.addr, pendingFrame.data, receiving);
+        auto result = WriteVar(pendingFrame.addr, pendingFrame.data, receiving, useHint);
         if (result != 0) {
             return result;
         }
@@ -304,9 +304,9 @@ template <const Flash::Info &F, const int EEPROMSize = (8 * 1024)> class Journal
             return result;
         }
 
-        // dispatch erase command on all sectors of partition but don't wait on sending.
+        // dispatch erase command on all sectors of partition
         for (int sector = 0; sector < Partition::numSectors; sector++) {
-            u16 result = Chip::EraseSector(sectorStart + sector, false);
+            u16 result = Chip::EraseSector(sectorStart + sector, true);
             if (result != 0) {
                 return result;
             }
