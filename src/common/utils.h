@@ -27,3 +27,5 @@ template <class T> class Maybe {
 
     operator bool() const { return hasValue; }
 };
+
+template <int N, class T> __attribute__((always_inline)) constexpr T Align(T x) { return x & -N; }

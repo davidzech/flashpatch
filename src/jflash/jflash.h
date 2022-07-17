@@ -75,7 +75,7 @@ template <const Flash::Info &F, const int EEPROMSize = (8 * 1024)> class Journal
   private:
     class compactProgress {
       public:
-        static constexpr int Size = EEPROMSize / 8;
+        static constexpr size_t Size = EEPROMSize / 8;
 
       private:
         u8 progress[Size];
@@ -84,7 +84,7 @@ template <const Flash::Info &F, const int EEPROMSize = (8 * 1024)> class Journal
             u8 *parent;
 
             reference(u8 *p) : parent(p) {}
-            reference &operator=(const bool b) {
+            reference &operator=(bool b) {
                 if (b) {
                     *parent |= 0x80;
                 } else {
@@ -94,23 +94,23 @@ template <const Flash::Info &F, const int EEPROMSize = (8 * 1024)> class Journal
                 return *this;
             }
 
-            operator bool() const { return (*parent & 0x80) == 0x80; }
+            operator bool() const { return (*parent & 0x80) != 0; }
         };
 
       public:
         void Reset() {
-            for (int i = 0; i < Size; i++) {
+            for (auto i = 0; i < Size; i++) {
                 progress[i] &= 0x7F;
             }
         }
 
-        constexpr bool operator[](int index) const { return (progress[index] & 0x80) == 0x80; }
-        reference operator[](int index) { return reference(&progress[index]); }
+        constexpr bool operator[](size_t index) const { return (progress[index] & 0x80) != 0; }
+        reference operator[](size_t index) { return reference(&progress[index]); }
     };
 
     class lookupTable {
       public:
-        static constexpr int Size = EEPROMSize / 8;
+        static constexpr size_t Size = EEPROMSize / 8;
 
       private:
         u8 table[Size];
@@ -129,16 +129,16 @@ template <const Flash::Info &F, const int EEPROMSize = (8 * 1024)> class Journal
         };
 
       public:
-        static constexpr int size = EEPROMSize / 8;
+        static constexpr size_t size = EEPROMSize / 8;
 
         void Reset() {
-            for (int i = 0; i < Size; i++) {
+            for (auto i = 0; i < Size; i++) {
                 table[i] &= 0x80;
             }
         }
 
-        constexpr u8 operator[](int index) const { return (table[index] & 0x7F); }
-        reference operator[](int index) { return reference(&table[index]); }
+        constexpr u8 operator[](size_t index) const { return (table[index] & 0x7F); }
+        reference operator[](size_t index) { return reference(&table[index]); }
     };
 
     struct globals {
@@ -149,7 +149,7 @@ template <const Flash::Info &F, const int EEPROMSize = (8 * 1024)> class Journal
         s16 LastFrameIndex;
     };
 
-    __attribute__((always_inline)) static globals *Globals() { return reinterpret_cast<globals *>(((EWRAM + EWRAM_SIZE - 1) - sizeof(globals)) & -4); }
+    __attribute__((always_inline)) static globals *Globals() { return reinterpret_cast<globals *>(Align<4>((EWRAM + EWRAM_SIZE - 1) - sizeof(globals))); }
     __attribute__((always_inline)) static Partition *Partition0() { return reinterpret_cast<Partition *>(FLASH_BASE); }
     __attribute__((always_inline)) static Partition *Partition1() { return reinterpret_cast<Partition *>(FLASH_BASE + (F.type.romSize / 2)); }
 
@@ -269,18 +269,16 @@ template <const Flash::Info &F, const int EEPROMSize = (8 * 1024)> class Journal
         typename Chip::ReadByteFunc func;
         for (int i = PartitionMaxFrames - 1; i >= 0; i--) {
 
-            Frame *f = &sending->frames[i];
+            const Frame *f = &sending->frames[i];
             u16 varAddr = Chip::Read(&f->addr, func);
             if (varAddr != 0xFFFF) {
                 // check if we have already added this variable
-                auto &&prog = compactProgress[varAddr];
-                if (prog == true) {
+                if (compactProgress[varAddr] == true) {
                     continue;
                 }
-                prog = true;
-                Variable var = Chip::Read(&f->data);
+                compactProgress[varAddr] = true;
 
-                auto result = WriteVar(varAddr, var, receiving, useHint);
+                auto result = WriteVar(varAddr, Chip::Read(&f->data), receiving, useHint);
                 if (result != 0) {
                     return result;
                 }
