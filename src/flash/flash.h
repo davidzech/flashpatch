@@ -184,9 +184,12 @@ template <const Info &F = SST39SF512> class Chip {
         FLASH_WRITE(0x5555, 0xA0);
         *dest = *src;
 
+        u16 result = 0;
         if (wait)
-            return Wait(1, dest, *src);
-        return 0;
+            result = Wait(1, dest, *src);
+
+        REG_WAITCNT = (REG_WAITCNT & ~WAITCNT_SRAM_MASK) | WAITCNT_SRAM_8;
+        return result;
     }
 
     static u16 WriteByte(u8 *dest, u8 b, bool wait = true) {
@@ -197,9 +200,12 @@ template <const Info &F = SST39SF512> class Chip {
         FLASH_WRITE(0x5555, 0xA0);
         dest[0] = (u8)b;
 
+        u16 result = 0;
         if (wait)
-            return Wait(1, dest, b);
-        return 0;
+            result = Wait(1, dest, b);
+
+        REG_WAITCNT = (REG_WAITCNT & ~WAITCNT_SRAM_MASK) | WAITCNT_SRAM_8;
+        return result;
     }
 
     static u16 EraseSector(u16 sectorNum, bool wait = true) {
@@ -275,6 +281,8 @@ template <const Info &F = SST39SF512> class Chip {
             dest++;
         }
 
+        REG_WAITCNT = (REG_WAITCNT & ~WAITCNT_SRAM_MASK) | WAITCNT_SRAM_8;
+
         return 0;
     }
 
@@ -334,12 +342,15 @@ template <const Info &F = SST39SF512> class Chip {
     }
 
     template <class T> static T Read(const T *const src, ReadByteFunc &readByte) {
+        REG_WAITCNT = (REG_WAITCNT & ~WAITCNT_SRAM_MASK) | WAITCNT_SRAM_8;
+
         T out;
         u8 *buf = (u8 *)&out;
         u8 *addr = (u8 *)src;
         for (int i = 0; i < sizeof(T); i++) {
             buf[i] = readByte(&addr[i]);
         }
+
         return out;
     }
 

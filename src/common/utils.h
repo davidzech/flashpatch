@@ -8,7 +8,7 @@ template <class T> class Maybe {
   public:
     Maybe(decltype(nullptr)) : hasValue(false) {}
     explicit Maybe(T &&v) : t(v), hasValue(true) {}
-    Maybe(T &v) : t(v), hasValue{true} {}
+    // Maybe(T &v) : t(v), hasValue{true} {}
     Maybe(T v) : t(v), hasValue(true) {}
 
     bool HasValue() const { return hasValue; }

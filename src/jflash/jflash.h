@@ -167,7 +167,7 @@ template <const Flash::Info &F, const int EEPROMSize = (8 * 1024)> class Journal
         Chip::Write((u8)0x00, (u8 *)&Partition0()->header.active);
     };
 
-    static Maybe<Variable> MaybeReadVar(u16 addr, typename Chip::ReadByteFunc &func, Partition *activePartition = nullptr, bool useHint = false) {
+    static Maybe<Variable> MaybeReadVar(u16 addr, typename Chip::ReadByteFunc &func, Partition *activePartition = nullptr, bool useHint = true) {
         if (activePartition == nullptr) {
             activePartition = ActivePartition();
         }
@@ -176,7 +176,7 @@ template <const Flash::Info &F, const int EEPROMSize = (8 * 1024)> class Journal
         auto &lookupTable = Globals()->LookupTable;
 
         if (useHint) {
-            int hintAddr = static_cast<int>(lookupTable[addr]);
+            u32 hintAddr = lookupTable[addr];
             if (hintAddr != 0) {
                 end = (hintAddr << 3);
             }
@@ -185,11 +185,11 @@ template <const Flash::Info &F, const int EEPROMSize = (8 * 1024)> class Journal
         for (int i = end - 1; i >= 0; i--) {
             Frame *f = &activePartition->frames[i];
             u16 varAddr = Chip::Read(&f->addr, func);
-            if (useHint && varAddr != 0xFFFF) {
-                lookupTable[varAddr] = (u8)(i >> 3) + 1;
-            }
             if (addr == varAddr) {
                 return Chip::Read(&f->data);
+            }
+            if (useHint && varAddr != 0xFFFF) {
+                lookupTable[varAddr] = (u8)(i >> 3) + 1;
             }
         }
 
@@ -273,20 +273,19 @@ template <const Flash::Info &F, const int EEPROMSize = (8 * 1024)> class Journal
             u16 varAddr = Chip::Read(&f->addr, func);
             if (varAddr != 0xFFFF) {
                 // check if we have already added this variable
-                if (compactProgress[varAddr] == true) {
-                    continue;
-                }
-                compactProgress[varAddr] = true;
-
-                auto result = WriteVar(varAddr, Chip::Read(&f->data), receiving, useHint);
-                if (result != 0) {
-                    return result;
+                auto &&prog = compactProgress[varAddr];
+                if (!prog) {
+                    prog = true;
+                    auto result = WriteVar(varAddr, Chip::Read(&f->data), receiving, false);
+                    if (result != 0) {
+                        return result;
+                    }
                 }
             }
         }
 
         // write pending variable
-        auto result = WriteVar(pendingFrame.addr, pendingFrame.data, receiving, useHint);
+        auto result = WriteVar(pendingFrame.addr, pendingFrame.data, receiving, false);
         if (result != 0) {
             return result;
         }
